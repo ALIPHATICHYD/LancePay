@@ -1,13 +1,25 @@
 'use client'
 
 import { useState, useEffect, use } from 'react'
-import { CheckCircle, XCircle, Loader2, CreditCard } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, CreditCard, Wallet } from 'lucide-react'
+import { useMoonPayWidget } from '@/components/payments/MoonPayWidget'
+
+interface InvoiceData {
+  invoiceNumber: string
+  freelancerName: string
+  description: string
+  amount: number
+  status: string
+  dueDate: string | null
+  walletAddress: string | null
+}
 
 export default function PaymentPage({ params }: { params: Promise<{ invoiceId: string }> }) {
   const { invoiceId } = use(params)
-  const [invoice, setInvoice] = useState<any>(null)
+  const [invoice, setInvoice] = useState<InvoiceData | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'paying' | 'success' | 'error'>('loading')
   const [error, setError] = useState('')
+  const { openWidget } = useMoonPayWidget()
 
   useEffect(() => {
     async function fetchInvoice() {
@@ -26,11 +38,35 @@ export default function PaymentPage({ params }: { params: Promise<{ invoiceId: s
   }, [invoiceId])
 
   const handlePay = async () => {
+    if (!invoice?.walletAddress) {
+      setStatus('error')
+      setError('Freelancer wallet not configured')
+      return
+    }
+
     setStatus('paying')
+    
     try {
-      const res = await fetch(`/api/pay/${invoiceId}`, { method: 'POST' })
-      if (!res.ok) throw new Error('Payment failed')
-      setStatus('success')
+      await openWidget({
+        walletAddress: invoice.walletAddress,
+        amount: invoice.amount,
+        currencyCode: 'usdc_base',
+        onSuccess: async () => {
+          // Mark invoice as paid
+          const res = await fetch(`/api/pay/${invoiceId}`, { method: 'POST' })
+          if (res.ok) {
+            setStatus('success')
+          } else {
+            setStatus('error')
+            setError('Failed to confirm payment')
+          }
+        },
+        onClose: () => {
+          if (status === 'paying') {
+            setStatus('ready')
+          }
+        }
+      })
     } catch {
       setStatus('error')
       setError('Payment failed. Please try again.')
@@ -102,7 +138,7 @@ export default function PaymentPage({ params }: { params: Promise<{ invoiceId: s
           {status === 'paying' ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Processing...
+              Opening payment...
             </>
           ) : (
             <>
@@ -112,9 +148,10 @@ export default function PaymentPage({ params }: { params: Promise<{ invoiceId: s
           )}
         </button>
 
-        <p className="text-xs text-gray-400 text-center mt-4">
-          Powered by LancePay • Secure payment
-        </p>
+        <div className="mt-4 flex items-center justify-center gap-2 text-xs text-gray-400">
+          <Wallet className="w-4 h-4" />
+          <span>Powered by MoonPay • Secure payment</span>
+        </div>
       </div>
     </div>
   )

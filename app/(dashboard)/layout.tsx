@@ -1,6 +1,9 @@
 import { AuthGuard } from '@/components/auth-guard'
 import { Sidebar } from '@/components/layout/sidebar'
 
+// Prevent static prerendering - dashboard requires authentication
+export const dynamic = 'force-dynamic'
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
