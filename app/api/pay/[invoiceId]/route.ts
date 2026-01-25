@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { createReferralEarning } from '@/lib/referral'
+import { dispatchWebhooks } from '@/lib/webhooks'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ invoiceId: string }> }) {
   const { invoiceId } = await params
@@ -10,6 +11,18 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   })
 
   if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+
+  // Dispatch webhook for invoice.viewed event (async, non-blocking)
+  dispatchWebhooks(invoice.userId, 'invoice.viewed', {
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    amount: Number(invoice.amount),
+    currency: invoice.currency,
+    clientEmail: invoice.clientEmail,
+    viewedAt: new Date().toISOString(),
+  }).catch((error) => {
+    console.error('Failed to dispatch invoice.viewed webhook:', error)
+  })
 
   return NextResponse.json({
     invoiceNumber: invoice.invoiceNumber,
@@ -57,6 +70,11 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       }
     })
   ])
+  const updatedInvoice = await prisma.invoice.update({ 
+    where: { id: invoice.id }, 
+    data: { status: 'paid', paidAt: new Date() },
+    include: { user: true }
+  })
 
   if (invoice.user.referredById) {
     await createReferralEarning({
@@ -66,6 +84,26 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       invoiceAmount: Number(invoice.amount)
     })
   }
+
+  // Process auto-swap
+  const { processAutoSwap } = await import('@/lib/auto-swap')
+  await processAutoSwap(
+    updatedInvoice.userId,
+    Number(updatedInvoice.amount),
+    updatedInvoice.user.email,
+    updatedInvoice.user.name || undefined
+  )
+
+  // Dispatch webhook for invoice.paid event
+  await dispatchWebhooks(updatedInvoice.userId, 'invoice.paid', {
+    invoiceId: updatedInvoice.id,
+    invoiceNumber: updatedInvoice.invoiceNumber,
+    amount: Number(updatedInvoice.amount),
+    currency: updatedInvoice.currency,
+    clientEmail: updatedInvoice.clientEmail,
+    clientName: updatedInvoice.clientName,
+    paidAt: new Date().toISOString(),
+  })
 
   return NextResponse.json({ success: true })
 }

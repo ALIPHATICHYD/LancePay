@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { sendPaymentReceivedEmail } from '@/lib/email'
 import { createReferralEarning } from '@/lib/referral'
+import { processAutoSwap } from '@/lib/auto-swap'
+import { dispatchWebhooks } from '@/lib/webhooks'
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,6 +33,7 @@ export async function POST(request: NextRequest) {
 
     if (!invoice || invoice.status === 'paid') return NextResponse.json({ received: true })
 
+    // Mark invoice as paid and create payment transaction
     await prisma.$transaction([
       prisma.invoice.update({
         where: { id: invoice.id },
@@ -66,8 +69,47 @@ export async function POST(request: NextRequest) {
         invoiceNumber: invoice.invoiceNumber,
         amount: Number(invoice.amount),
         currency: invoice.currency,
+    const paymentAmount = Number(invoice.amount)
+
+    // Process auto-swap if user has an active rule
+    const autoSwapResult = await processAutoSwap(
+      invoice.userId,
+      paymentAmount,
+      invoice.user.email,
+      invoice.user.name || undefined
+    )
+
+    if (autoSwapResult.triggered) {
+      console.log('Auto-swap triggered for user:', invoice.userId, {
+        swapAmount: autoSwapResult.swapAmount,
+        remainingAmount: autoSwapResult.remainingAmount,
+        bankAccountId: autoSwapResult.bankAccountId,
       })
+      // Auto-swap notification is handled within processAutoSwap
+    } else {
+      // No auto-swap - send regular payment notification
+      if (invoice.user.email) {
+        await sendPaymentReceivedEmail({
+          to: invoice.user.email,
+          freelancerName: invoice.user.name || 'Freelancer',
+          clientName: invoice.clientName || 'Client',
+          invoiceNumber: invoice.invoiceNumber,
+          amount: paymentAmount,
+          currency: invoice.currency,
+        })
+      }
     }
+
+    // Dispatch webhook for invoice.paid event
+    await dispatchWebhooks(invoice.userId, 'invoice.paid', {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      amount: paymentAmount,
+      currency: invoice.currency,
+      clientEmail: invoice.clientEmail,
+      clientName: invoice.clientName,
+      paidAt: new Date().toISOString(),
+    })
 
     return NextResponse.json({ received: true })
   } catch (error) {
