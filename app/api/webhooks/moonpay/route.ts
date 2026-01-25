@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { sendPaymentReceivedEmail } from '@/lib/email'
+import { createReferralEarning } from '@/lib/referral'
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,7 +17,16 @@ export async function POST(request: NextRequest) {
 
     const invoice = await prisma.invoice.findUnique({
       where: { invoiceNumber },
-      include: { user: true }
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            referredById: true
+          }
+        }
+      }
     })
 
     if (!invoice || invoice.status === 'paid') return NextResponse.json({ received: true })
@@ -38,6 +48,15 @@ export async function POST(request: NextRequest) {
         }
       })
     ])
+
+    if (invoice.user.referredById) {
+      await createReferralEarning({
+        referrerId: invoice.user.referredById,
+        referredUserId: invoice.userId,
+        invoiceId: invoice.id,
+        invoiceAmount: Number(invoice.amount)
+      })
+    }
 
     if (invoice.user.email) {
       await sendPaymentReceivedEmail({
