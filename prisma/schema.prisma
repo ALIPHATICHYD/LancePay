@@ -35,6 +35,7 @@ model User {
   apiKeys          ApiKey[]
   brandingSettings BrandingSettings?
   webhooks         UserWebhook[]
+  userBadges       UserBadge[]
 }
 
 model Wallet {
@@ -301,4 +302,34 @@ model PaymentAdvance {
   @@index([userId])
   @@index([invoiceId])
   @@index([status])
+}
+
+model BadgeDefinition {
+  id               String   @id @default(uuid())
+  name             String   @db.VarChar(100)
+  description      String?
+  criteriaJson     Json // Logic to check eligibility
+  imageUrl         String?  @db.VarChar(512)
+  stellarAssetCode String   @db.VarChar(12)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  userBadges UserBadge[]
+
+  @@index([stellarAssetCode])
+}
+
+model UserBadge {
+  id             String   @id @default(uuid())
+  userId         String
+  badgeId        String
+  stellarTxHash  String   @db.VarChar(255)
+  issuedAt       DateTime @default(now())
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@index([badgeId])
 }
