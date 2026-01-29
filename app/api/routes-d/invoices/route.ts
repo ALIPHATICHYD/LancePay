@@ -1,19 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { AuthTokenClaims } from '@privy-io/server-auth'
 import { prisma } from '@/lib/db'
 import { verifyAuthToken } from '@/lib/auth'
 import { createInvoiceSchema } from '@/lib/validations'
 import { generateInvoiceNumber } from '@/lib/utils'
+import { logAuditEvent, extractRequestMetadata } from '@/lib/audit'
 
-async function getOrCreateUser(claims: any) {
+async function getOrCreateUser(claims: AuthTokenClaims, referralCode?: string) {
   let user = await prisma.user.findUnique({ where: { privyId: claims.userId } })
-  
+
   if (!user) {
-    const email = claims.email || `${claims.userId}@privy.local`
-    user = await prisma.user.create({
-      data: { privyId: claims.userId, email },
-    })
+    const email = (claims as { email?: string }).email || `${claims.userId}@privy.local`
+    const data: { privyId: string; email: string; referredById?: string } = {
+      privyId: claims.userId,
+      email
+    }
+
+    if (referralCode) {
+      const referrer = await prisma.user.findUnique({
+        where: { referralCode },
+        select: { id: true }
+      })
+      if (referrer) {
+        data.referredById = referrer.id
+      }
+    }
+
+    user = await prisma.user.create({ data })
   }
-  
+
   return user
 }
 
@@ -60,6 +75,9 @@ export async function POST(request: NextRequest) {
     const invoice = await prisma.invoice.create({
       data: { userId: user.id, invoiceNumber, clientEmail, clientName, description, amount, dueDate: dueDate ? new Date(dueDate) : null, paymentLink },
     })
+
+    // Log audit event
+    await logAuditEvent(invoice.id, 'invoice.created', user.id, extractRequestMetadata(request.headers))
 
     return NextResponse.json(invoice, { status: 201 })
   } catch (error) {
