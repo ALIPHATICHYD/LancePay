@@ -468,3 +468,29 @@ model PayoutItem {
   @@index([status])
   @@index([payoutType])
 }
+
+model RiskAssessment {
+  id         String   @id @default(uuid())
+  entityType String   @db.VarChar(20)
+  entityId   String
+  riskScore  Int
+  signals    Json?
+  status     String   @default("logged") @db.VarChar(20)
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([riskScore])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SecurityWatchlist {
+  id        String   @id @default(uuid())
+  type      String   @db.VarChar(20)
+  value     String   @unique @db.VarChar(255)
+  reason    String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([value])
+}
