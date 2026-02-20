@@ -8,7 +8,7 @@ import { useState, useEffect } from "react";
  * Development Mode Banner
  * Shows when Privy is not configured, directing users to mock login
  */
-export function DevModeBanner() {
+export function DevModeBanner({ nonce }: { nonce?: string }) {
   const [showBanner, setShowBanner] = useState(false);
 
   useEffect(() => {
