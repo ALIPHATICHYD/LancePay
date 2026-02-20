@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { canMergeAccount, calculateRecoverableXLM } from "@/lib/account-merge";
 
 interface AccountMergeModalProps {
@@ -20,9 +20,10 @@ export function AccountMergeModal({
   const [issues, setIssues] = useState<string[]>([]);
   const [recoverableXLM, setRecoverableXLM] = useState("0");
 
-  useState(() => {
+  useEffect(() => {
     checkMergeEligibility();
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicKey]);
 
   const checkMergeEligibility = async () => {
     const result = await canMergeAccount(publicKey);
