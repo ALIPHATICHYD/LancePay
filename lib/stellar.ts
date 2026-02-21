@@ -202,6 +202,48 @@ export async function sendUSDCPayment(
 }
 
 /**
+ * Prepare an unsigned trustline transaction XDR for the recipient to sign.
+ *
+ * In the non-custodial badge issuance flow this is Step 1: the recipient must
+ * create a trustline for the badge asset (limit = 1) by signing this transaction
+ * client-side (e.g. via WalletConnect) and submitting it to Stellar themselves.
+ * The server never touches the recipient's secret key.
+ *
+ * @param recipientPublicKey Recipient's public key
+ * @param issuerPublicKey Badge issuer's public key
+ * @param badgeAssetCode Asset code for the badge (max 12 chars)
+ * @param memo Optional memo (truncated to 28 bytes)
+ * @returns Unsigned transaction XDR string
+ */
+export async function prepareBadgeTrustlineXdr(
+  recipientPublicKey: string,
+  issuerPublicKey: string,
+  badgeAssetCode: string,
+  memo?: string,
+): Promise<string> {
+  const badgeAsset = new Asset(badgeAssetCode, issuerPublicKey);
+  const baseFee = (await server.fetchBaseFee()).toString();
+  const safeMemo = sanitizeStellarTextMemo(memo);
+
+  const recipientAccount = await server.loadAccount(recipientPublicKey);
+  const txBuilder = new TransactionBuilder(recipientAccount, {
+    fee: baseFee,
+    networkPassphrase: STELLAR_NETWORK,
+  }).addOperation(
+    Operation.changeTrust({
+      asset: badgeAsset,
+      limit: "1",
+    }),
+  ).setTimeout(30);
+
+  if (safeMemo) {
+    txBuilder.addMemo(Memo.text(safeMemo));
+  }
+
+  return txBuilder.build().toXDR();
+}
+
+/**
  * Issue a soulbound token (non-transferable badge) to a recipient.
  *
  * Soulbound enforcement mechanism:
@@ -241,32 +283,9 @@ export async function issueSoulboundBadge(
     const baseFee = (await server.fetchBaseFee()).toString();
     const safeMemo = sanitizeStellarTextMemo(memo);
 
-    // Step 1: Recipient creates a trustline for the badge asset (limit = 1).
-    // Because AUTH_REQUIRED is set on the issuer, the trustline starts unauthorized
-    // and the recipient cannot receive the asset until the issuer approves.
-    const recipientAccount = await server.loadAccount(recipientPublicKey);
-    const trustlineTxBuilder = new TransactionBuilder(recipientAccount, {
-      fee: baseFee,
-      networkPassphrase: STELLAR_NETWORK,
-    }).addOperation(
-      Operation.changeTrust({
-        asset: badgeAsset,
-        limit: "1",
-      }),
-    ).setTimeout(30);
-
-    if (safeMemo) {
-      trustlineTxBuilder.addMemo(Memo.text(safeMemo));
-    }
-
-    const trustlineTx = trustlineTxBuilder.build();
-    // Recipient must sign their own trustline operation.
-    // In a custodial setup the platform holds the key; in a non-custodial
-    // setup this transaction would be built client-side and sent here signed.
-    // Here we sign with the issuer acting as a sponsored/fee-bump source
-    // or the recipient key if available. For badge issuance the issuer pays.
-    trustlineTx.sign(issuerKeypair);
-    await server.submitTransaction(trustlineTx);
+    // Step 1 (trustline creation) is performed client-side: the caller must use
+    // prepareBadgeTrustlineXdr(), have the recipient sign the returned XDR via
+    // WalletConnect, and submit it to Stellar before calling this function.
 
     // Step 2: Issuer authorizes the recipient's trustline using setTrustLineFlags.
     // AUTHORIZED_FLAG = 1  →  allows the trustline to hold the asset.
